@@ -1,0 +1,13 @@
+[Unit]
+Description=Restart a Terraria server whose game port stopped listening, while nobody is on
+Documentation=https://github.com/heyvaldemar/terraria-server-docker-compose#when-the-game-port-stops-listening
+
+[Service]
+Type=oneshot
+# Where this repository is checked out. The script finds the compose file and
+# keeps its state (.terraria-guard*) there.
+WorkingDirectory=/opt/terraria-server-docker-compose
+ExecStart=/opt/terraria-server-docker-compose/scripts/guard.sh
+# BOUNDED, SO A HANG BECOMES A FAILURE. A run is a /proc read, a REST call,
+# and at most one restart with three minutes to prove the port is back.
+TimeoutStartSec=5m

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _(no unreleased changes yet)_
 
+## [1.1.0] - 2026-10-25
+
+### Added
+
+- **`scripts/guard.sh`, with `systemd/terraria-guard.timer` every minute: a server whose game port stopped listening is restarted, while nobody is on.** Terraria gives every accepted TCP connection a slot and stops listening when none is free, and a connection that never speaks the game's protocol is never released (Pryaxis/TShock#1023, open at the API layer since 2016). Internet scanners do exactly that: on the server this template comes from, nobody could join while the process ran, REST answered and the status page said Online. Here, 28 silent connections close the port. The guard acts after two minutes closed, does nothing when the player count cannot be read, warns once and waits when players are on, stops after six restarts in 24 hours, and otherwise saves, restarts and proves the port listens again, in about five seconds. `TERRARIA_GUARD_WEBHOOK` reports each action to Mattermost or Slack.
+- **`scripts/listening.sh`**: whether the game port is in LISTEN, read from the container's `/proc/net/tcp`. Never by connecting: a probe that connects takes a slot, and is the fault it would look for.
+
+### Fixed
+
+- **`scripts/status.sh` said Online while nobody could join.** It read TShock's REST API, which answers on its own thread while the game port is closed. Online now needs the port in LISTEN too; a server that answers and does not listen is "Not accepting players", exit 1. The health check already read the port and went red.
+
 ## [1.0.0] - 2026-10-25
 
 ### Added
@@ -22,5 +33,6 @@ _(no unreleased changes yet)_
 - **`scripts/backup.sh` and `scripts/restore.sh`.** The world and the account and ban database, saved first, kept only once the archive is shown to hold both, mode 600. A restore refuses an archive without the database or under another world's name than the compose file starts, sets aside what was there, and compares every file at its live path by sha256.
 - **`tests/e2e-game.sh`, the real server in CI** from empty volumes, every claim above checked against it, the "without this" ones both ways.
 
-[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/releases/tag/v1.0.0

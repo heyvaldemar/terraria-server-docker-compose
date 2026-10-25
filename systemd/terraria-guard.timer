@@ -1,0 +1,11 @@
+[Unit]
+Description=Check every minute that the Terraria game port listens
+
+[Timer]
+# Every minute: the guard acts after two minutes closed, so a closed port is
+# found within a minute and acted on within three.
+OnCalendar=*:*:30
+Persistent=no
+
+[Install]
+WantedBy=timers.target

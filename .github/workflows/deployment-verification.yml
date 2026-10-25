@@ -115,12 +115,13 @@ jobs:
           docker compose -f terraria-server-docker-compose.yml config >/dev/null
           echo "compose OK"
 
-      - name: Uid 1000, REST off the host, the health check, bans on Tokyo time, the save on stop, backup and restore
+      - name: Uid 1000, REST off the host, the health check, silent connections and the guard, bans on Tokyo time, the save on stop, backup and restore
         # TShock and a small world fit on a runner, so this is the server
         # itself, through this compose file, from empty volumes. Every claim
         # that says "without this, that" is run both ways: the health check
         # red through a world generation and for a frozen server; a ban sent
         # with a Z suffix ending hours off; the image's own entrypoint losing
         # the world on stop; a restore refused without the ban database or
-        # under another world's name.
+        # under another world's name; forty silent connections closing the
+        # game port, and the guard's every rule, ending in a real restart.
         run: ./tests/e2e-game.sh

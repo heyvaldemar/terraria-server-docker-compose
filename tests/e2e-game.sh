@@ -13,6 +13,12 @@
 #   the settings       the password from .env, quote and backslash included
 #   the health check   red through a world generation, red for a frozen
 #                      server, green again when it thaws
+#   silent connections forty that open and say nothing close the game port;
+#                      status says "Not accepting players" and the health
+#                      check goes red while REST still answers; the guard
+#                      waits, refuses to guess, leaves players be, stops at
+#                      its daily cap, and otherwise restarts and proves the
+#                      port is back
 #   moderation         a 60-minute ban on a server in Asia/Tokyo ends in 60
 #                      minutes, and the same ban with a Z suffix does not;
 #                      unban, kick of nobody, say, save
@@ -121,6 +127,49 @@ else
 fi
 docker exec "$(cid)" bash -c "kill -CONT $pid"
 wait_health healthy 120 && pass "thawed: healthy again" || fail "thawed and still $(health)"
+
+echo
+echo "=== silent connections take every slot, and the guard ==="
+echo
+export TERRARIA_GUARD_STATE="$TERRARIA_BACKUP_DIR/guard"
+holding() { docker exec "$(cid)" bash -c 'p=$(printf %04X "$1"); awk -v p=":$p" "NR>1 && \$2 ~ p\"\$\" && \$4 == \"08\"" /proc/net/tcp /proc/net/tcp6 | grep -c .' _ "$TERRARIA_SERVER_PORT"; }
+out="$(scripts/guard.sh 2>&1)"
+grep -q "listening: nothing to do" <<<"$out" && pass "listening: the guard does nothing" || fail "guard on a listening server: $out"
+# Forty connections that open and say nothing, the way a scanner does.
+for _ in $(seq 1 40); do (exec 3<>"/dev/tcp/127.0.0.1/$TERRARIA_SERVER_PORT") 2>/dev/null; sleep 0.05; done
+sleep 2
+if scripts/listening.sh; then
+  fail "forty silent connections, and the game port still listens: the fault this guards against did not happen"
+else
+  pass "forty silent connections: the game port stopped listening, $(holding) of them held in CLOSE_WAIT"
+fi
+st="$(scripts/status.sh)"; rc=$?
+[ "$rc" = 1 ] && grep -q '"status": "Not accepting players"' <<<"$st" && grep -q '"players": 0' <<<"$st" \
+  && pass "status: $st, exit 1, while REST still answers" || fail "status with the port closed: exit $rc, $st"
+wait_health unhealthy 120 && pass "the health check went red: it asks the game port, not the process" || fail "port closed and still $(health)"
+starts() { docker inspect -f '{{.RestartCount}} {{.State.StartedAt}}' "$(cid)"; }
+before="$(starts)"
+out="$(scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -q "acting after 120s" <<<"$out" && pass "closed just now: the guard waits ($out)" || fail "closed now: exit $rc, $out"
+echo $(( $(date +%s) - 150 )) >"$TERRARIA_GUARD_STATE"
+out="$(TERRARIA_PLAYERS="" scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -q "not acting on a guess" <<<"$out" && pass "closed 150s, players unknown: exit 1, no restart" || fail "unknown players: exit $rc, $out"
+out="$(TERRARIA_PLAYERS=2 scripts/guard.sh 2>&1)"; rc=$?
+out2="$(TERRARIA_PLAYERS=2 scripts/guard.sh 2>&1)"
+[ "$rc" = 0 ] && grep -q "2 player(s) are on and unaffected" <<<"$out" && grep -q "still closed" <<<"$out2" \
+  && pass "closed, two players on: warned once, then waits" || fail "players on: exit $rc, $out / $out2"
+for i in 1 2 3 4 5 6; do echo $(( $(date +%s) - 3600 * i )); done >"$TERRARIA_GUARD_STATE.restarts"
+out="$(scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 1 ] && grep -q "6 restarts in 24 hours; not restarting" <<<"$out" && pass "six restarts in 24 hours: stops, exit 1" || fail "restart cap: exit $rc, $out"
+[ "$(starts)" = "$before" ] && pass "and none of those five decisions restarted the server" || fail "the server was restarted by a decision that must not restart it"
+echo $(( $(date +%s) - 90000 )) >"$TERRARIA_GUARD_STATE.restarts"
+out="$(scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -q "restarted, and it listens again after" <<<"$out" && scripts/listening.sh \
+  && pass "closed 2 min, nobody on: ${out#* * }" || fail "the restart: exit $rc, $out"
+[ "$(grep -c . "$TERRARIA_GUARD_STATE.restarts")" = 1 ] && pass "the restart is counted, and a stamp older than a day dropped" || fail "restart stamps: $(cat "$TERRARIA_GUARD_STATE.restarts")"
+wait_health healthy 120 && pass "healthy again" || fail "after the guard's restart: $(health)"
+st="$(scripts/status.sh)" && grep -q '"status": "Online"' <<<"$st" && pass "status: Online again" || fail "status after the restart: $st"
+pid="$(docker exec "$(cid)" bash -c 'for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = TShock.Server ] && echo "${p#/proc/}"; done' | head -1)"
 
 echo
 echo "=== moderation, on a server in Asia/Tokyo ==="

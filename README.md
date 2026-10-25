@@ -51,10 +51,28 @@ docker compose -p terraria exec terraria-server cat /tshock/setup-code.txt
 
 **The password lives in `.env`, and goes into a file.** `TERRARIA_SERVER_PASSWORD` is written into `ServerPassword` in `config.json` on every start, escaped, so a quote or a backslash in it works and an empty one opens the server again. It is not passed on TShock's command line, where any user on the host could read it with `ps`.
 
+<a id="when-the-game-port-stops-listening"></a>**Silent connections close the game port, and a guard reopens it.** Terraria gives every accepted TCP connection a client slot and stops listening when none is free, and a connection that never speaks the game's protocol is never released. TShock's maintainers wrote in 2016 that any open socket is treated as a player and moved the issue to the API layer ([Pryaxis/TShock#1023](https://github.com/Pryaxis/TShock/issues/1023)), where it still is. Internet scanners do exactly that. On the server this template comes from, nobody could join, from the LAN or from outside, while the process ran, REST answered and the status page said Online: every connection on the game port was a scanner's, in CLOSE_WAIT or idle. Here, 28 such connections close the port (TShock's 8 slots and 20 reserved). Killing the sockets in the kernel does not help, because the game's own bookkeeping holds the slots; a restart does, in about five seconds.
+
+The health check here goes red when the port closes, because it reads the port's LISTEN state, and `scripts/status.sh` says "Not accepting players" instead of Online. Docker does not restart an unhealthy container, so `scripts/guard.sh` does, from a timer every minute, under rules:
+- the port closed for two minutes before it acts, since a restart closes it for a few seconds on its own;
+- a player count it cannot read means it does nothing and exits 1;
+- with players on, it says so once and waits: they are unaffected, and ending their game to let a stranger in would be backwards;
+- after six restarts in 24 hours it stops and says so on every run, so a different fault cannot hide in a restart loop;
+- otherwise it saves the world, restarts, and proves the port listens again.
+
+Set `TERRARIA_GUARD_WEBHOOK` to a Mattermost or Slack incoming webhook to hear about every action.
+
+```bash
+sudo cp systemd/terraria-guard.service systemd/terraria-guard.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now terraria-guard.timer
+scripts/guard.sh --dry-run    # what it would do right now
+```
+
 ## Administration
 
 ```bash
 scripts/status.sh                          # {"status": "Online", "players": 0, "max": 8, "world": "Terraria"}
+scripts/listening.sh                       # exit 0 when the game port listens; read, never connected to
 scripts/admin.sh who
 scripts/admin.sh kick <name> [reason]
 scripts/admin.sh ban <name> [minutes] [reason]    # no minutes, or 0: permanent
@@ -65,7 +83,7 @@ scripts/admin.sh save                      # returns once the world file is writ
 scripts/rest.sh <endpoint> [name=value ...]       # anything else TShock's REST API offers
 ```
 
-Bans are by character name, so they hold for somebody who has already left. An unknown player count is not zero: when TShock does not answer, `status.sh` says `"Unknown"` with `null` players and exits 1, never "Online" with nobody on.
+Bans are by character name, so they hold for somebody who has already left. `status.sh` says Online only when the game port listens and REST answers; a server that answers and does not listen is `"Not accepting players"`, exit 1. An unknown player count is not zero: when TShock does not answer, it says `"Unknown"` with `null` players and exits 1, never "Online" with nobody on.
 
 ## Backups
 
@@ -86,7 +104,7 @@ The test restores into fresh volumes on a second project and port, starts it, an
 
 ## Testing
 
-`tests/e2e-game.sh` starts the real server from empty volumes through this compose file, on a CI runner, on every change and every day. It checks the process (uid 1000, no capabilities, no anonymous volume); the API (nothing on the host's 7878, published nowhere, `config.json` mode 600, a 48-character token found in neither `docker inspect` nor the log); the password from `.env` with a quote and a backslash in it; `status.sh`; the health check, never healthy while the world is generated, unhealthy when the server is frozen and healthy when it thaws; a 60-minute ban on Asia/Tokyo time ending in 60 minutes, and the same ban sent with a `Z` that does not; unban, a second unban refused, a kick of nobody refused, say, save; the backup's contents and mode; a stop that saves the world and exits 0, and the image's own entrypoint that exits 143 with the world file untouched; and a restore into fresh volumes, after two refusals that leave them empty, that comes back in the same world with its bans.
+`tests/e2e-game.sh` starts the real server from empty volumes through this compose file, on a CI runner, on every change and every day. It checks the process (uid 1000, no capabilities, no anonymous volume); the API (nothing on the host's 7878, published nowhere, `config.json` mode 600, a 48-character token found in neither `docker inspect` nor the log); the password from `.env` with a quote and a backslash in it; `status.sh`; the health check, never healthy while the world is generated, unhealthy when the server is frozen and healthy when it thaws; forty silent connections closing the game port, with the status saying "Not accepting players" and the health check red while REST answers, and the guard waiting, refusing to guess, leaving players be, stopping at its daily cap and otherwise restarting and proving the port is back; a 60-minute ban on Asia/Tokyo time ending in 60 minutes, and the same ban sent with a `Z` that does not; unban, a second unban refused, a kick of nobody refused, say, save; the backup's contents and mode; a stop that saves the world and exits 0, and the image's own entrypoint that exits 143 with the world file untouched; and a restore into fresh volumes, after two refusals that leave them empty, that comes back in the same world with its bans.
 
 CI also lints the shell and the workflows, scans the pinned image with Trivy, and checks daily that the pin still resolves to what upstream publishes and is TShock's newest release.
 
