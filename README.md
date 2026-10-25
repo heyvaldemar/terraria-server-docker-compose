@@ -1,6 +1,7 @@
 # Terraria server using Docker Compose
 
 [![Deployment Verification](https://github.com/heyvaldemar/terraria-server-docker-compose/actions/workflows/deployment-verification.yml/badge.svg?branch=main)](https://github.com/heyvaldemar/terraria-server-docker-compose/actions/workflows/deployment-verification.yml)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15914/badge)](https://www.bestpractices.dev/projects/15914)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Terraria server on TShock, the community's server, from TShock's own image, pinned by digest and run as uid 1000 with no capabilities. Its admin API is published nowhere, a stop saves the world, and every claim below is checked against the real server on every change.
