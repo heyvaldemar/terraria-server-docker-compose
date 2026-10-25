@@ -1,0 +1,127 @@
+name: Pin Freshness
+
+# ITS OWN WORKFLOW, SO THE BADGE MEANS WHAT A READER THINKS IT MEANS.
+#
+# This job used to run inside Deployment Verification, whose badge is the one
+# on the README and in the catalogue. It is a designed alarm: it goes red when
+# a pin falls behind upstream, and the fleet's triage moves the pin within the
+# day. Measured across the fleet over fourteen days, nine red runs in ten were
+# this alarm and nothing else, and a visitor cannot tell "one version behind"
+# from "does not boot". The job below is unchanged; only its address moved.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    # Daily rebuild: security patches should not wait for a weekly slot.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pin-freshness-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Authenticated requests avoid the anonymous API rate limit that shared
+  # GitHub runners regularly hit (api.github.com answers 403 otherwise).
+  GH_API_TOKEN: ${{ github.token }}
+
+jobs:
+  check-pin-freshness:
+    name: Check pinned images for upstream drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Scheduled + manual dispatch only: a new upstream release is not
+    # actionable inside an unrelated PR. On the cron the failure lands as a
+    # workflow-failure notification to the maintainer — a stale pin must
+    # not sit unnoticed. Dependabot cannot see these pins (they are compose
+    # interpolation defaults, not Dockerfile literals), so this job is the
+    # actual tracking mechanism.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Compare pinned digests against what each tag resolves to now
+        run: |
+          status=0
+          # Enumerated from the compose file, never listed here: a list written
+          # by hand falls behind the file it describes.
+          vars="$(grep -oE '\$\{[A-Z0-9_]+_IMAGE_TAG:-' terraria-server-docker-compose.yml | sed -E 's/^\$\{//; s/:-$//' | sort -u)"
+          for var in $vars; do
+            pin="$(grep -m1 -oE "\\\$\\{${var}:-.*" terraria-server-docker-compose.yml | sed -E -e ':a' -e 's/\$\{[A-Z0-9_]+:-([^{}]*)\}/\1/' -e 'ta')"
+            # An absent variable used to fall through to the registry lookup
+            # and surface as "did not resolve", which reads as an upstream
+            # problem. It is a problem in this file: say so.
+            if [ -z "$pin" ]; then
+              echo "::error::${var} is not present in terraria-server-docker-compose.yml — this job is checking a pin that does not exist"
+              status=1
+              continue
+            fi
+            case "$pin" in *@sha256:*) ;; *) continue ;; esac
+            ref="${pin%%@*}"
+            pinned_digest="${pin##*@}"
+            # Three attempts: an unanswered registry lookup used to leave this empty,
+            # and the comparison below then reported it as drift.
+            current_digest=""
+            for attempt in 1 2 3; do
+              current_digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' 2>/dev/null | jq -r '.digest // empty')"
+              [ -n "$current_digest" ] && break
+              sleep $(( attempt * 5 ))
+            done
+            if [ -z "$current_digest" ]; then
+              echo "::error::${ref} did not resolve after three attempts: the registry did not answer, or the tag is gone. The pin itself is unchanged."
+              status=1
+              continue
+            fi
+            if [ "$pinned_digest" != "$current_digest" ]; then
+              echo "::error::${var} digest drift: pinned ${pinned_digest}, but ${ref} now resolves to ${current_digest}"
+              status=1
+            else
+              echo "${var} OK (${ref})"
+            fi
+          done
+          exit "$status"
+
+      - name: Compare the pinned version against the newest TShock release tag
+        # Runs even when the digest comparison above failed, so one run
+        # reports every problem it can see instead of one per day.
+        if: always()
+        run: |
+          # ghcr.io/pryaxis/tshock carries a tag per release (6.2.1), the
+          # moving 6.2, 6 and latest, prereleases (6.0.0-pre3) and branch
+          # builds. Only N.N.N is a release.
+          status=0
+          pin="$(grep -m1 -oE '\$\{TERRARIA_SERVER_IMAGE_TAG:-.*' terraria-server-docker-compose.yml | sed -E -e ':a' -e 's/\$\{[A-Z0-9_]+:-([^{}]*)\}/\1/' -e 'ta')"
+          if [ -z "$pin" ]; then
+            echo "::error::TERRARIA_SERVER_IMAGE_TAG is not present in terraria-server-docker-compose.yml"
+            exit 1
+          fi
+          ref="${pin%%@*}"
+          pinned_version="${ref##*:}"
+          token="$(curl -fsSL --retry 3 'https://ghcr.io/token?scope=repository:pryaxis/tshock:pull' | jq -r .token)"
+          latest="$(curl -fsSL --retry 3 -H "Authorization: Bearer $token" 'https://ghcr.io/v2/pryaxis/tshock/tags/list?n=10000' \
+            | jq -r '.tags[]' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)"
+          if [ -z "$latest" ]; then
+            echo "::error::Could not read the tag list from ghcr.io"
+            status=1
+          # ORDER, NOT INEQUALITY: sort -V, because a string compare puts
+          # 6.10 below 6.9, and a pin ahead of the newest tag is not behind.
+          elif [ "$pinned_version" != "$latest" ] \
+               && [ "$(printf '%s\n%s\n' "$pinned_version" "$latest" | sort -V | head -1)" = "$pinned_version" ]; then
+            echo "::error::TERRARIA_SERVER_IMAGE_TAG is behind: pinned ${pinned_version}, newest release tag is ${latest}"
+            status=1
+          elif [ "$pinned_version" != "$latest" ]; then
+            echo "TERRARIA_SERVER_IMAGE_TAG ${pinned_version} is ahead of the newest release tag ${latest}"
+          else
+            echo "TERRARIA_SERVER_IMAGE_TAG ${pinned_version} is the newest release tag"
+          fi
+          exit "$status"

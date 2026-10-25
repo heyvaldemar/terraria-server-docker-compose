@@ -1,0 +1,153 @@
+# Image pin lives HERE, as an interpolation default, so `git pull` (or
+# re-downloading this file) delivers the exact image this repository has
+# tested. Set TERRARIA_SERVER_IMAGE_VERSION in .env to run a different
+# version while the digest for it is fetched normally, or
+# TERRARIA_SERVER_IMAGE_TAG to replace the whole reference. CI (the Trivy scan
+# and check-pin-freshness) reads the pin from this line: this block is the
+# single source of truth, and the Dockerfile builds FROM it.
+#
+# TSHOCK'S OWN IMAGE, built by the project's CI from its own Dockerfile and
+# tagged by release, chosen over the popular third-party repackagings of the
+# same TShock: every release pinned here is one upstream published, with no
+# second maintainer in between. The tag is the TShock release; the Terraria
+# version it serves is in TShock's release notes.
+x-images:
+  terraria-server: &terraria-server-image ${TERRARIA_SERVER_IMAGE_TAG:-ghcr.io/pryaxis/tshock:${TERRARIA_SERVER_IMAGE_VERSION:-6.2.1@sha256:70e59a8e6b4c79b5fad469d320962c1fc98625ed3a955510a2f2641dbff2f7e7}}
+
+services:
+  terraria-server:
+    # THE PINNED IMAGE WITH ONE LAYER ON TOP, so it runs as uid 1000 (see the
+    # Dockerfile). Built on every `up`, from the layer cache when nothing
+    # moved: a pin that changes in `git pull` is the image that runs, with no
+    # separate build step to forget.
+    build:
+      context: .
+      args:
+        TSHOCK_IMAGE: *terraria-server-image
+    image: terraria-server-docker-compose:local
+    pull_policy: build
+    user: "1000:1000"
+    # THE WRAPPER IS PID 1, AND IT IS THERE FOR THE WAY OUT. TShock does not
+    # save on SIGTERM: run as the image runs it, `docker compose stop` ended it
+    # in under a second, exit 143, and the world on disk was the last
+    # autosave. scripts/start.sh turns the signal into TShock's own `off`,
+    # which saves the world and exits 0. It also writes the settings this .env
+    # owns into config.json before every start. tests/e2e-game.sh shows both.
+    entrypoint: ["/bin/bash", "/opt/terraria/start.sh"]
+    # Appended to the server's own flags. -autocreate acts only when the world
+    # file does not exist: 1 small, 2 medium, 3 large.
+    command:
+      - "-world"
+      - "/worlds/${TERRARIA_WORLD_FILE:-world}.wld"
+      - "-autocreate"
+      - "${TERRARIA_WORLD_SIZE:-2}"
+      - "-worldname"
+      - "${TERRARIA_WORLD_NAME:-Terraria}"
+      - "-port"
+      - "${TERRARIA_SERVER_PORT:-7777}"
+      - "-maxplayers"
+      - "${TERRARIA_MAX_PLAYERS:-8}"
+    # Handles untrusted input from the internet. It needs no capability at
+    # all, and cannot gain one through a setuid binary.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # MEASURED, AT THE FIRST START: an empty server generating its world
+    # peaked at 386 MiB (small), 454 MiB (medium) and 663 MiB (large). The
+    # ceiling leaves room for players and a long-played world, and there is no
+    # swap on top of it, because a game tick that pages is a stutter every
+    # player sees.
+    deploy:
+      resources:
+        limits:
+          memory: ${TERRARIA_SERVER_MEMORY_LIMIT:-2g}
+          cpus: "${TERRARIA_SERVER_CPU_LIMIT:-2.0}"
+        reservations:
+          memory: ${TERRARIA_SERVER_MEMORY_RESERVATION:-512m}
+          cpus: "${TERRARIA_SERVER_CPU_RESERVATION:-0.5}"
+    memswap_limit: ${TERRARIA_SERVER_MEMORY_LIMIT:-2g}
+    ports:
+      # Published under the number the server binds. Terraria is TCP; a UDP
+      # 7777 on the same host (Killing Floor 2, VEIN) does not collide.
+      - "${TERRARIA_SERVER_PORT:-7777}:${TERRARIA_SERVER_PORT:-7777}/tcp"
+      # TSHOCK'S REST API (7878/tcp) IS PUBLISHED NOWHERE. It can ban, kick,
+      # run any console command and read the user database, so it answers
+      # inside this container only: scripts/rest.sh calls it from in here,
+      # with a token that start.sh made on the first start and that never
+      # leaves config.json.
+    environment:
+      TZ: ${TERRARIA_SERVER_TIMEZONE:-UTC}
+      # Empty: anyone who finds the server can join. start.sh writes it into
+      # config.json on every start, so .env is where it is changed.
+      TERRARIA_SERVER_PASSWORD: ${TERRARIA_SERVER_PASSWORD:-}
+      # TShock.Server is a .NET single-file bundle that unpacks itself on
+      # start, by default into a directory only root can write. As uid 1000 it
+      # stops there with "Failed to determine location for extracting embedded
+      # files". /tmp is writable and goes with the container.
+      DOTNET_BUNDLE_EXTRACT_BASE_DIR: /tmp/dotnet-bundle
+      HOME: /tmp
+    volumes:
+      # THE THREE PATHS THE IMAGE DECLARES AS VOLUMES, all three named. Leave
+      # one out and Docker makes an anonymous volume for it on every
+      # recreate, holding whatever was written there last time and attached
+      # to nothing.
+      #   tshock   config.json (with the REST token), tshock.sqlite (accounts,
+      #            groups and BANS), logs
+      #   worlds   the world and the game's own .bak of it
+      #   plugins  TShock plugins, empty until you add one
+      - terraria-server-tshock:/tshock
+      - terraria-server-worlds:/worlds
+      - terraria-server-plugins:/plugins
+      - ./scripts/start.sh:/opt/terraria/start.sh:ro
+    healthcheck:
+      # TWO QUESTIONS, BECAUSE EITHER ALONE PASSES FOR A SERVER NOBODY CAN USE.
+      #
+      # Is the game listening? TShock's REST API answers /status with 200
+      # while the world is still being generated: measured here, for 98
+      # seconds of a large world's first start, before the game had opened its
+      # port. So the port must be in LISTEN in the container's /proc/net/tcp,
+      # which is read, not connected to: a probe of the game port would be
+      # logged as a player arriving and leaving, every 20 seconds.
+      #
+      # Does it answer? A server frozen mid-tick keeps its listening socket
+      # and its process name, so both of those stay green; REST /status, on a
+      # thread of the same process, stops answering. tests/e2e-game.sh freezes
+      # it with SIGSTOP and watches this go red, and watches it stay red
+      # through a world generation.
+      test: ["CMD", "bash", "-c", "p=$$(printf '%04X' \"$$1\") && grep -qE \"^ *[0-9]+: [0-9A-F]+:$$p [0-9A-F]+:[0-9A-F]+ 0A \" /proc/net/tcp /proc/net/tcp6 && exec 3<>/dev/tcp/127.0.0.1/7878 && printf 'GET /status HTTP/1.0\\r\\n\\r\\n' >&3 && timeout 5 grep -q '\"status\": \"200\"' <&3", "_", "${TERRARIA_SERVER_PORT:-7777}"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      # The first start generates the world: about half a minute for a small
+      # one on a CI runner, minutes for a large one.
+      start_period: ${TERRARIA_SERVER_START_PERIOD:-10m}
+    # The world is saved on the way out, through start.sh; a large one needs
+    # more than Docker's default ten seconds.
+    stop_grace_period: ${TERRARIA_SERVER_STOP_GRACE_PERIOD:-60s}
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: ${TERRARIA_SERVER_LOG_MAX_SIZE:-10m}
+        max-file: "${TERRARIA_SERVER_LOG_MAX_FILE:-3}"
+
+# DECLARED EXTERNAL SO `docker compose down -v` CANNOT DELETE THEM.
+#
+# The world and the account and ban database. As project-managed volumes they
+# are one `down -v` away from being gone, and `down -v` is the command
+# everybody reaches for when a stack misbehaves. Create them before the first
+# start:
+#   for v in tshock worlds plugins; do docker volume create terraria-server-$v; done
+# A second server on the same host takes another TERRARIA_VOLUME_PREFIX, and
+# another project name and port.
+volumes:
+  terraria-server-tshock:
+    name: ${TERRARIA_VOLUME_PREFIX:-terraria-server}-tshock
+    external: true
+  terraria-server-worlds:
+    name: ${TERRARIA_VOLUME_PREFIX:-terraria-server}-worlds
+    external: true
+  terraria-server-plugins:
+    name: ${TERRARIA_VOLUME_PREFIX:-terraria-server}-plugins
+    external: true
