@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_(no unreleased changes yet)_
+
+## [1.2.0] - 2026-10-27
+
 ### Changed
 
 - **The player cap and the reserve are written into `config.json` on every start, and the reserve is now every slot Terraria has left.** TShock 6.2.1 sizes the network slots from the file (`MaxSlots` + `ReservedSlots`), and the `-maxplayers` flag this template passed changed `MaxSlots` in memory only: a `/reload` put the cap back to whatever the file said, TShock's own 8 unless edited, and the network slots stayed at 8 + 20 = 28 whatever `TERRARIA_MAX_PLAYERS` was. `scripts/start.sh` now writes `MaxSlots` from `TERRARIA_MAX_PLAYERS` (8) and `ReservedSlots` from the new `TERRARIA_RESERVED_SLOTS`, by default 255 minus the cap, and the compose file passes no `-maxplayers`. It takes 255 silent connections to close the game port instead of 28. A value outside 1-255, or a cap and reserve past 255 together, stops the start with its name. **Upgrade note:** a `MaxSlots` or `ReservedSlots` edited by hand in `config.json` is overwritten on the next start; set them in `.env`.
@@ -45,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scripts/backup.sh` and `scripts/restore.sh`.** The world and the account and ban database, saved first, kept only once the archive is shown to hold both, mode 600. A restore refuses an archive without the database or under another world's name than the compose file starts, sets aside what was there, and compares every file at its live path by sha256.
 - **`tests/e2e-game.sh`, the real server in CI** from empty volumes, every claim above checked against it, the "without this" ones both ways.
 
-[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/releases/tag/v1.0.0
