@@ -12,6 +12,10 @@
 #   TERRARIA_SERVER_PORT    the game port      (default from .env, else 7777)
 #   TERRARIA_COMPOSE_FILE   the compose file   (default terraria-server-docker-compose.yml)
 #   COMPOSE_PROJECT_NAME    the project        (default terraria)
+#
+# Read whole before it runs: one brace group, ending in exit (scripts/guard.sh,
+# "READ WHOLE BEFORE IT RUNS", says why).
+{
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 3
 
@@ -28,4 +32,6 @@ docker compose -f "$COMPOSE_FILE" -p "$PROJECT" exec -T terraria-server bash -c 
   [ -r /proc/net/tcp ] || exit 3
   grep -qE "^ *[0-9]+: [0-9A-F]+:$p [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6 2>/dev/null' _ "$PORT" 2>/dev/null
 rc=$?
-case "$rc" in 0|1) exit "$rc" ;; *) exit 3 ;; esac
+case "$rc" in 0|1) ;; *) rc=3 ;; esac
+exit "$rc"
+}

@@ -35,6 +35,10 @@
 #   TERRARIA_BACKUP_KEEP    how many to keep         (default 14)
 #   TERRARIA_WORLD_FILE     the world's file name    (default from .env, else world)
 #   TERRARIA_VOLUME_PREFIX  the volumes' prefix      (default from .env, else terraria-server)
+#
+# Read whole before it runs: one brace group, ending in exit (scripts/guard.sh,
+# "READ WHOLE BEFORE IT RUNS", says why).
+{
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -110,3 +114,4 @@ say "wrote $BACKUP_DIR/$NAME ($(du -h "$OUT/$NAME" | cut -f1)): $WORLD and tshoc
 ls -1t "$OUT"/terraria-*.tar.gz 2>/dev/null | tail -n +"$((KEEP + 1))" | while IFS= read -r old; do rm -f -- "$old"; done
 find "$OUT" -maxdepth 1 -name 'terraria-*.tar.gz.partial' -mmin +60 -delete 2>/dev/null
 exit 0
+}

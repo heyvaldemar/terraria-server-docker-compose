@@ -20,6 +20,10 @@
 #
 #   TERRARIA_COMPOSE_FILE   the compose file   (default terraria-server-docker-compose.yml)
 #   COMPOSE_PROJECT_NAME    the project        (default terraria)
+#
+# Read whole before it runs: one brace group, ending in exit (scripts/guard.sh,
+# "READ WHOLE BEFORE IT RUNS", says why).
+{
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 [ $# -ge 1 ] || { echo "usage: scripts/rest.sh <path> [name=value ...]" >&2; exit 2; }
@@ -67,3 +71,5 @@ timeout 30 cat <&3
 echo
 [ "$code" = 200 ]
 IN
+exit
+}

@@ -36,6 +36,13 @@ services:
     entrypoint: ["/bin/bash", "/opt/terraria/start.sh"]
     # Appended to the server's own flags. -autocreate acts only when the world
     # file does not exist: 1 small, 2 medium, 3 large.
+    #
+    # NO -maxplayers. TShock sizes the network slots from config.json
+    # (MaxSlots + ReservedSlots) and the flag changes MaxSlots in memory only,
+    # until a /reload puts back whatever the file says. start.sh writes both
+    # numbers into the file from TERRARIA_MAX_PLAYERS and
+    # TERRARIA_RESERVED_SLOTS on every start, so the file is the one place
+    # they live.
     command:
       - "-world"
       - "/worlds/${TERRARIA_WORLD_FILE:-world}.wld"
@@ -45,8 +52,6 @@ services:
       - "${TERRARIA_WORLD_NAME:-Terraria}"
       - "-port"
       - "${TERRARIA_SERVER_PORT:-7777}"
-      - "-maxplayers"
-      - "${TERRARIA_MAX_PLAYERS:-8}"
     # Handles untrusted input from the internet. It needs no capability at
     # all, and cannot gain one through a setuid binary.
     cap_drop:
@@ -81,6 +86,12 @@ services:
       # Empty: anyone who finds the server can join. start.sh writes it into
       # config.json on every start, so .env is where it is changed.
       TERRARIA_SERVER_PASSWORD: ${TERRARIA_SERVER_PASSWORD:-}
+      # The player cap, and the network slots past it. Empty reserve: every
+      # slot Terraria has left, 255 minus the cap, so it takes 255 connections
+      # that never speak the game's protocol to close the port, not 28.
+      # start.sh writes both into config.json on every start.
+      TERRARIA_MAX_PLAYERS: ${TERRARIA_MAX_PLAYERS:-8}
+      TERRARIA_RESERVED_SLOTS: ${TERRARIA_RESERVED_SLOTS:-}
       # TShock.Server is a .NET single-file bundle that unpacks itself on
       # start, by default into a directory only root can write. As uid 1000 it
       # stops there with "Failed to determine location for extracting embedded

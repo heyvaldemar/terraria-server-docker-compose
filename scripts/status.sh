@@ -18,6 +18,10 @@
 # Steam query, so its REST /status is the only place the count comes from,
 # and a monitor that read silence as an empty server would report a server
 # that is down as one nobody is playing on.
+#
+# Read whole before it runs: one brace group, ending in exit (scripts/guard.sh,
+# "READ WHOLE BEFORE IT RUNS", says why).
+{
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -37,3 +41,5 @@ case $? in
 esac
 printf '{"status": "%s", "players": %s, "max": %s, "world": "%s"}\n' "$state" "$players" "$max" "$world"
 [ "$state" = Online ]
+exit
+}

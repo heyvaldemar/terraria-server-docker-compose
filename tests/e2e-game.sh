@@ -11,14 +11,23 @@
 #   the API            REST off the host, the token in no environment, no
 #                      command line and no log, config.json mode 600
 #   the settings       the password from .env, quote and backslash included
+#   the slots          the cap and the reserve from .env in config.json, kept
+#                      through a /reload, a /reload taking the cap from the
+#                      file, and start.sh writing both back on a restart
 #   the health check   red through a world generation, red for a frozen
 #                      server, green again when it thaws
-#   silent connections forty that open and say nothing close the game port;
-#                      status says "Not accepting players" and the health
-#                      check goes red while REST still answers; the guard
-#                      waits, refuses to guess, leaves players be, stops at
-#                      its daily cap, and otherwise restarts and proves the
-#                      port is back
+#   silent connections at TShock's own 8 + 20, 28 that open and say nothing
+#                      close the game port; status says "Not accepting
+#                      players" and the health check goes red while REST
+#                      still answers; the guard waits, refuses to guess,
+#                      leaves players be, stops at its daily cap, and
+#                      otherwise restarts and proves the port is back. At
+#                      this template's 10 + 245, 254 leave it listening and
+#                      the 255th closes it
+#   housekeeping       an empty server holding dead connections while it
+#                      still listens: left alone while young, with players
+#                      on, at the cap, or when any reading is unknown; and
+#                      otherwise restarted quietly, the dead ones gone
 #   moderation         a 60-minute ban on a server in Asia/Tokyo ends in 60
 #                      minutes, and the same ban with a Z suffix does not;
 #                      unban, kick of nobody, say, save
@@ -46,6 +55,7 @@ export TERRARIA_WORLD_NAME="CI World"
 export TERRARIA_WORLD_FILE=ci-world
 export TERRARIA_SERVER_TIMEZONE=Asia/Tokyo
 export TERRARIA_SERVER_PASSWORD='pa"ss\word'
+export TERRARIA_MAX_PLAYERS=10
 export TERRARIA_BACKUP_DIR
 TERRARIA_BACKUP_DIR="$(mktemp -d)"
 F=terraria-server-docker-compose.yml
@@ -112,7 +122,21 @@ grep -q "A password for this server was set in config.json and is being used" <<
   && grep -q '"serverpassword": true' <<<"$(scripts/rest.sh status)" \
   && pass "the password from .env, quote and backslash included, is the server's" || fail "the password from .env was not taken"
 st="$(scripts/status.sh)"
-[ "$st" = '{"status": "Online", "players": 0, "max": 8, "world": "CI World"}' ] && pass "status: $st" || fail "status: $st"
+[ "$st" = '{"status": "Online", "players": 0, "max": 10, "world": "CI World"}' ] && pass "status: $st" || fail "status: $st"
+
+echo
+echo "=== the slots ==="
+echo
+slots() { docker exec "$(cid)" sed -nE 's/^    "(MaxSlots|ReservedSlots)": ([0-9]+),?$/\1 \2/p' /tshock/config.json | tr '\n' ' '; }
+max() { sed -nE 's/.*"max": ([0-9]+).*/\1/p' <<<"$(scripts/status.sh)"; }
+reload() { scripts/rest.sh v3/server/rawcmd cmd=/reload >/dev/null 2>&1; }
+[ "$(slots)" = "MaxSlots 10 ReservedSlots 245 " ] && grep -q "10 player slots and 245 reserved, 255 of Terraria's 255" <<<"$(docker logs "$(cid)" 2>&1)" \
+  && pass "config.json: $(slots)from TERRARIA_MAX_PLAYERS=10 and the default reserve, 255 - 10" || fail "config.json: $(slots)"
+reload && [ "$(max)" = 10 ] && pass "a /reload keeps the cap at 10: it is in the file" || fail "after a /reload the cap is $(max)"
+# TShock's own numbers in the file, the way it writes them on a first start.
+docker exec "$(cid)" sed -i -E 's/^(    "MaxSlots": )[0-9]+/\18/; s/^(    "ReservedSlots": )[0-9]+/\120/' /tshock/config.json
+reload && [ "$(max)" = 8 ] && pass "with TShock's own 8 and 20 in the file, a /reload sets the cap to 8: the file is what counts" \
+  || fail "with 8 and 20 in the file, a /reload left the cap at $(max)"
 
 echo
 echo "=== the health check: a frozen server ==="
@@ -136,12 +160,14 @@ holding() { docker exec "$(cid)" bash -c 'p=$(printf %04X "$1"); awk -v p=":$p" 
 out="$(scripts/guard.sh 2>&1)"
 grep -q "listening: nothing to do" <<<"$out" && pass "listening: the guard does nothing" || fail "guard on a listening server: $out"
 # Forty connections that open and say nothing, the way a scanner does.
-for _ in $(seq 1 40); do (exec 3<>"/dev/tcp/127.0.0.1/$TERRARIA_SERVER_PORT") 2>/dev/null; sleep 0.05; done
-sleep 2
+silent() { for _ in $(seq 1 "$1"); do (exec 3<>"/dev/tcp/127.0.0.1/$TERRARIA_SERVER_PORT") 2>/dev/null; sleep 0.05; done; sleep 2; }
+silent 40
 if scripts/listening.sh; then
-  fail "forty silent connections, and the game port still listens: the fault this guards against did not happen"
+  fail "forty silent connections at 8 + 20, and the game port still listens: the fault this guards against did not happen"
 else
-  pass "forty silent connections: the game port stopped listening, $(holding) of them held in CLOSE_WAIT"
+  h="$(holding)"
+  [ "$h" = 28 ] && pass "forty silent connections at TShock's own 8 + 20: the game port stopped listening, $h of them held in CLOSE_WAIT" \
+    || fail "the port closed at 8 + 20 with $h connections held, not 28"
 fi
 st="$(scripts/status.sh)"; rc=$?
 [ "$rc" = 1 ] && grep -q '"status": "Not accepting players"' <<<"$st" && grep -q '"players": 0' <<<"$st" \
@@ -169,6 +195,54 @@ out="$(scripts/guard.sh 2>&1)"; rc=$?
 [ "$(grep -c . "$TERRARIA_GUARD_STATE.restarts")" = 1 ] && pass "the restart is counted, and a stamp older than a day dropped" || fail "restart stamps: $(cat "$TERRARIA_GUARD_STATE.restarts")"
 wait_health healthy 120 && pass "healthy again" || fail "after the guard's restart: $(health)"
 st="$(scripts/status.sh)" && grep -q '"status": "Online"' <<<"$st" && pass "status: Online again" || fail "status after the restart: $st"
+[ "$(slots)" = "MaxSlots 10 ReservedSlots 245 " ] && [ "$(max)" = 10 ] && pass "start.sh wrote 10 and 245 back on the restart, and the cap is 10 again" \
+  || fail "after the restart: $(slots), cap $(max)"
+
+echo
+echo "=== 255 slots, and housekeeping ==="
+echo
+silent 254
+h="$(holding)"
+scripts/listening.sh && [ "$h" = 254 ] && pass "254 silent connections at 10 + 245: $h held in CLOSE_WAIT, and the game port still listens" \
+  || fail "254 silent connections: $h held, listening exit $(scripts/listening.sh; echo $?)"
+before="$(starts)"
+hk() { TERRARIA_GUARD_WEBHOOK=http://127.0.0.1:9/unreachable scripts/guard.sh "$@" 2>&1; }
+out="$(hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "254 dead connection(s) holding slots; up 0 h, cleared once up 12 h" <<<"$out" && pass "dead connections, up minutes: left until 12 h up" || fail "young: exit $rc, $out"
+out="$(TERRARIA_UPTIME="" hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "how long the server has been up cannot be read" <<<"$out" && pass "uptime unknown: nothing" || fail "uptime unknown: exit $rc, $out"
+out="$(TERRARIA_DEAD_CONNECTIONS="" hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "cannot be counted" <<<"$out" && pass "dead connections uncountable: nothing" || fail "dead unknown: exit $rc, $out"
+export TERRARIA_GUARD_HOUSEKEEP_AFTER=0
+out="$(TERRARIA_PLAYERS="" hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "player count cannot be read, so not clearing on a guess" <<<"$out" && pass "old enough, players unknown: nothing" || fail "players unknown: exit $rc, $out"
+out="$(TERRARIA_PLAYERS=3 hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "3 player(s) on, so not clearing them now" <<<"$out" && pass "old enough, three players on: nothing" || fail "players on: exit $rc, $out"
+/bin/cp -f "$TERRARIA_GUARD_STATE.restarts" "$TERRARIA_GUARD_STATE.restarts.kept"
+for i in 1 2 3 4 5 6; do echo $(( $(date +%s) - 3600 * i )); done >"$TERRARIA_GUARD_STATE.restarts"
+out="$(hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "6 restarts in 24 hours already, so not clearing them now" <<<"$out" && pass "old enough, empty, six restarts today: the shared cap holds it" || fail "cap: exit $rc, $out"
+/bin/mv -f "$TERRARIA_GUARD_STATE.restarts.kept" "$TERRARIA_GUARD_STATE.restarts"
+out="$(hk --dry-run)"; rc=$?
+[ "$rc" = 0 ] && grep -q "would restart to clear 254 dead connection(s)" <<<"$out" && pass "dry run: ${out#* * }" || fail "dry run: exit $rc, $out"
+[ "$(starts)" = "$before" ] && pass "and none of those seven decisions restarted the server" || fail "a housekeeping decision that must not restart did"
+silent 1
+h="$(holding)"
+scripts/listening.sh && fail "the 255th silent connection, and the port still listens ($h held)" \
+  || { [ "$h" = 255 ] && pass "the 255th closes it: $h held, every slot Terraria has" || fail "closed with $h held, not 255"; }
+echo $(( $(date +%s) - 150 )) >"$TERRARIA_GUARD_STATE"
+out="$(TERRARIA_GUARD_HOUSEKEEP_AFTER=43200 scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -q "restarted, and it listens again after" <<<"$out" && pass "closed at 255, nobody on: the guard restarted it" || fail "the restart at 255: exit $rc, $out"
+silent 5
+stamps="$(grep -c . "$TERRARIA_GUARD_STATE.restarts")"
+out="$(hk)"; rc=$?
+[ "$rc" = 0 ] && grep -q "housekeeping: empty, up 0 h, 5 dead connection(s) on the game port; restarted to clear them, listening again after" <<<"$out" \
+  && scripts/listening.sh && [ "$(holding)" = 0 ] \
+  && pass "empty, five dead connections, old enough: ${out#* * }; none held now, and nothing sent to a webhook that would have failed it" \
+  || fail "housekeeping restart: exit $rc, $out, held $(holding)"
+[ "$(grep -c . "$TERRARIA_GUARD_STATE.restarts")" = $(( stamps + 1 )) ] && pass "it counts against the same daily cap" || fail "restart stamps after housekeeping: $(cat "$TERRARIA_GUARD_STATE.restarts")"
+unset TERRARIA_GUARD_HOUSEKEEP_AFTER
+wait_health healthy 120 && pass "healthy again" || fail "after housekeeping: $(health)"
 pid="$(docker exec "$(cid)" bash -c 'for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = TShock.Server ] && echo "${p#/proc/}"; done' | head -1)"
 
 echo
@@ -256,8 +330,8 @@ for _ in $(seq 1 180); do
   [ "$(docker inspect -f '{{.State.Health.Status}}' "$(COMPOSE_PROJECT_NAME=$R docker compose -f "$F" ps -q terraria-server)" 2>/dev/null)" = healthy ] && break
   sleep 1
 done
-st="$(TERRARIA_VOLUME_PREFIX=$R COMPOSE_PROJECT_NAME=$R scripts/status.sh)"
-grep -q '"world": "CI World"' <<<"$st" && pass "the restored server is up, in the same world: $st" || fail "the restored server: $st"
+st="$(TERRARIA_VOLUME_PREFIX=$R COMPOSE_PROJECT_NAME=$R TERRARIA_SERVER_PORT=17778 scripts/status.sh)"
+grep -q '"status": "Online"' <<<"$st" && grep -q '"world": "CI World"' <<<"$st" && pass "the restored server is up, in the same world: $st" || fail "the restored server: $st"
 grep -q 'name:Banned Before Backup permanent' <<<"$(TERRARIA_VOLUME_PREFIX=$R COMPOSE_PROJECT_NAME=$R scripts/admin.sh bans)" \
   && pass "and the ban made before the backup is still there" || fail "the ban made before the backup is gone"
 generated="$(docker logs "$(COMPOSE_PROJECT_NAME=$R docker compose -f "$F" ps -q terraria-server)" 2>&1 | grep -cE 'Generating world|Creating world')"

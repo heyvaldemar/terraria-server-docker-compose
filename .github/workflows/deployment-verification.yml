@@ -109,19 +109,29 @@ jobs:
           docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 \
             update.sh scripts/*.sh tests/*.sh
 
+      - name: Every script is read whole before it runs
+        # A timer starts the guard every minute; bash reads a script as it
+        # runs it, so an edit in place mid-run executes shifted text. The test
+        # checks every script is one brace group, and rewrites the guard's
+        # file under a running copy, wrapped and unwrapped.
+        run: ./tests/read-whole.sh
+
       - name: The compose file parses with the shipped defaults
         run: |
           cp .env.example .env
           docker compose -f terraria-server-docker-compose.yml config >/dev/null
           echo "compose OK"
 
-      - name: Uid 1000, REST off the host, the health check, silent connections and the guard, bans on Tokyo time, the save on stop, backup and restore
+      - name: Uid 1000, REST off the host, the slots, the health check, silent connections and the guard, bans on Tokyo time, the save on stop, backup and restore
         # TShock and a small world fit on a runner, so this is the server
         # itself, through this compose file, from empty volumes. Every claim
         # that says "without this, that" is run both ways: the health check
         # red through a world generation and for a frozen server; a ban sent
         # with a Z suffix ending hours off; the image's own entrypoint losing
         # the world on stop; a restore refused without the ban database or
-        # under another world's name; forty silent connections closing the
-        # game port, and the guard's every rule, ending in a real restart.
+        # under another world's name; a /reload over TShock's own slot
+        # numbers taking the cap from the file; 28 silent connections closing
+        # the game port at 8 + 20, 254 leaving it open and the 255th closing
+        # it at this template's 10 + 245, and the guard's every rule,
+        # housekeeping included, each ending in a real restart.
         run: ./tests/e2e-game.sh

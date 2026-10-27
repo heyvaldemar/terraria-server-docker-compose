@@ -9,7 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The player cap and the reserve are written into `config.json` on every start, and the reserve is now every slot Terraria has left.** TShock 6.2.1 sizes the network slots from the file (`MaxSlots` + `ReservedSlots`), and the `-maxplayers` flag this template passed changed `MaxSlots` in memory only: a `/reload` put the cap back to whatever the file said, TShock's own 8 unless edited, and the network slots stayed at 8 + 20 = 28 whatever `TERRARIA_MAX_PLAYERS` was. `scripts/start.sh` now writes `MaxSlots` from `TERRARIA_MAX_PLAYERS` (8) and `ReservedSlots` from the new `TERRARIA_RESERVED_SLOTS`, by default 255 minus the cap, and the compose file passes no `-maxplayers`. It takes 255 silent connections to close the game port instead of 28. A value outside 1-255, or a cap and reserve past 255 together, stops the start with its name. **Upgrade note:** a `MaxSlots` or `ReservedSlots` edited by hand in `config.json` is overwritten on the next start; set them in `.env`.
 - **The README records the guard's first catch in the wild.** On the server this template comes from, scanners filled the slots again about twenty hours after `scripts/guard.sh` went in; it waited its two minutes, found nobody playing, saved, restarted, and the port listened again in five seconds.
+
+### Fixed
+
+- **The test's check of the restored server asked the first server's port.** It passed on the world name alone while `status.sh`, asking 17777 of a server on 17778, said "Not accepting players". It now asks 17778 and needs Online.
+
+### Added
+
+- **Housekeeping in `scripts/guard.sh`: an empty server that has been up 12 hours and holds dead connections is restarted before they close the port.** A larger reserve only moves the day the port closes, and that day may have players on, when nothing may be done until they leave. So a server that still listens, has nobody on and holds at least one connection in CLOSE_WAIT on the game port is saved and restarted after `TERRARIA_GUARD_HOUSEKEEP_AFTER` (12 hours) up, in the log and not the webhook. It does nothing when the player count, the dead connections or the uptime cannot be read, and it counts against the same six restarts in 24 hours.
+- **`tests/read-whole.sh`: every script is read whole before it runs.** bash reads a script as it executes it, from the same byte offset in whatever the file holds by then; on the server this template comes from, the timer started the guard while its file was being edited in place, and the run died on a syntax error. Every script in `scripts/` is now one brace group ending in `exit`. The test checks the shape of each, and rewrites the guard's file in place under a running copy: wrapped, it finishes as it started; unwrapped, it runs the new text.
 
 ## [1.1.0] - 2026-10-25
 

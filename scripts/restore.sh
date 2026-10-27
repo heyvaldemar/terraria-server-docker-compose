@@ -27,6 +27,10 @@
 #   TERRARIA_WORLD_FILE     the world's file name   (default from .env, else world)
 #   TERRARIA_VOLUME_PREFIX  the volumes' prefix     (default from .env, else terraria-server)
 #   COMPOSE_PROJECT_NAME    the compose project     (default terraria)
+#
+# Read whole before it runs: one brace group, ending in exit (scripts/guard.sh,
+# "READ WHOLE BEFORE IT RUNS", says why).
+{
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -105,3 +109,5 @@ if [ -z "${files:-}" ] || [ "${bad:-1}" != 0 ]; then
 fi
 echo "restored $files file(s) from $FILE: worlds/$WORLD and tshock/tshock.sqlite at the paths the server reads, byte for byte; what the volumes held is in .before-restore-$stamp inside each"
 echo "start the server: docker compose -f $COMPOSE_FILE -p $PROJECT up -d"
+exit
+}

@@ -37,6 +37,10 @@
 # A /ban run as a console command through REST fails with the same
 # NullReferenceException (it wants a player to run as), which is why the ban
 # goes through /v3/bans/create at all.
+#
+# Read whole before it runs: one brace group, ending in exit (scripts/guard.sh,
+# "READ WHOLE BEFORE IT RUNS", says why).
+{
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
@@ -156,3 +160,5 @@ case "$cmd" in
     usage
     ;;
 esac
+exit
+}
