@@ -60,6 +60,8 @@ The health check here goes red when the port closes, because it reads the port's
 - after six restarts in 24 hours it stops and says so on every run, so a different fault cannot hide in a restart loop;
 - otherwise it saves the world, restarts, and proves the port listens again.
 
+On the server this template comes from, scanners filled the slots again about twenty hours after the guard went in. It waited its two minutes, found nobody playing, saved, restarted, and the port listened again five seconds later. It is not a one-off fault: it is what a game port on the internet gets, and without the guard the server would have been silently unjoinable again.
+
 Set `TERRARIA_GUARD_WEBHOOK` to a Mattermost or Slack incoming webhook to hear about every action.
 
 ```bash

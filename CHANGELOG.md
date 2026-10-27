@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_(no unreleased changes yet)_
+### Changed
+
+- **The README records the guard's first catch in the wild.** On the server this template comes from, scanners filled the slots again about twenty hours after `scripts/guard.sh` went in; it waited its two minutes, found nobody playing, saved, restarted, and the port listened again in five seconds.
 
 ## [1.1.0] - 2026-10-25
 
