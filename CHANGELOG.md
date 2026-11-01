@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_(no unreleased changes yet)_
+
+## [1.2.1] - 2026-11-01
+
 ### Fixed
 
 - **The timers keep running the night the clocks go back.** `terraria-guard.timer` (`*:*:30`) was a local-time calendar, and on 2026-11-01 the server this template comes from ran none of its local-time timers between 06:00 and 07:00 UTC: systemd took the repeated hour as already gone. They are now in UTC, with an `OnUnitActiveSec` net a little longer than the period and `AccuracySec=1s`. `tests/timers.sh` reproduces that night with `systemd-analyze` and fails on a local-time calendar. Reinstall the units after updating: `sudo cp systemd/*.timer /etc/systemd/system/ && sudo systemctl daemon-reload`.
@@ -51,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scripts/backup.sh` and `scripts/restore.sh`.** The world and the account and ban database, saved first, kept only once the archive is shown to hold both, mode 600. A restore refuses an archive without the database or under another world's name than the compose file starts, sets aside what was there, and compares every file at its live path by sha256.
 - **`tests/e2e-game.sh`, the real server in CI** from empty volumes, every claim above checked against it, the "without this" ones both ways.
 
-[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/releases/tag/v1.0.0
