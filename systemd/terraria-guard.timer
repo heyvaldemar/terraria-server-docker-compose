@@ -4,8 +4,8 @@ Description=Check every minute that the Terraria game port listens
 [Timer]
 # Every minute: the guard acts after two minutes closed, so a closed port is
 # found within a minute and acted on within three.
-# In UTC. On 2026-11-01, when the clocks went back, the server this template
-# comes from ran none of its local-time timers for an hour: systemd took the
+# In UTC. The night the clocks went back, the server this template comes
+# from ran none of its local-time timers for an hour: systemd took the
 # repeated hour as already gone. UTC has no repeated hour.
 OnCalendar=*:*:30 UTC
 # A net under the calendar: eighty seconds after the last run, so a missed run is

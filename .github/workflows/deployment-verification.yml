@@ -117,9 +117,10 @@ jobs:
         run: ./tests/read-whole.sh
 
       - name: The timers keep running the night the clocks go back
-        # On 2026-11-01 the server this template comes from ran none of its
-        # local-time timers for the repeated hour. The test asks
-        # systemd-analyze for that night and fails on a local calendar.
+        # The night the clocks went back, the server this template comes from
+        # ran none of its local-time timers for the repeated hour. The test
+        # asks systemd-analyze for a fall-back night and fails on a local
+        # calendar.
         run: ./tests/timers.sh
 
       - name: The compose file parses with the shipped defaults

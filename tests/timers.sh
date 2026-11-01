@@ -1,10 +1,10 @@
 #!/bin/bash
 # Every timer in systemd/ keeps running through the night the clocks go back.
 #
-# On 2026-11-01 the clocks in Toronto went back from 02:00 EDT to 01:00 EST.
-# The server this template comes from ran none of its local-time "*:0/5"
-# timers between 06:00 and 07:00 UTC: systemd reads a local calendar in
-# wall-clock time and took the repeated hour as already gone. A watchdog that
+# The night the clocks went back an hour, the server this template comes
+# from ran none of its local-time "*:0/5" timers for that hour: systemd
+# reads a local calendar in wall-clock time and took the repeated hour as
+# already gone. A watchdog that
 # runs every two minutes ran 8 times in that window instead of about 38. A
 # calendar written in UTC has no repeated hour.
 #
@@ -12,10 +12,11 @@
 #               an OnUnitActiveSec net longer than its period and at most twice
 #               it, so a missed run is made up within one more period, and a
 #               run on time resets the net before it fires
-#   the night   systemd-analyze, on Toronto time, from 05:59:59 UTC on
-#               2026-11-01: each calendar's next run falls inside the repeated
-#               hour; the same calendar without UTC (the plant) is seen to skip
-#               it, so this test can tell the two apart
+#   the night   systemd-analyze, on Berlin time, from one second before its
+#               fall-back on 2026-10-25: each calendar's next run falls inside
+#               the repeated hour; the same calendar without UTC (the plant) is
+#               seen to skip it, so this test can tell the two apart. Any zone
+#               with a fall-back shows the same.
 # shellcheck disable=SC2015   # pass and fail always exit 0, so "A && pass || fail" is if-then-else here
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -25,12 +26,12 @@ pass() { echo "  PASS: $1"; PASSED=$((PASSED+1)); }
 fail() { echo "  FAIL: $1"; FAILED=$((FAILED+1)); }
 
 command -v systemd-analyze >/dev/null || { echo "systemd-analyze is not here: this test needs a systemd host"; exit 2; }
-NIGHT="2026-11-01 05:59:59 UTC"
-REPEAT_END=$(date -u -d "2026-11-01 07:00:00 UTC" +%s)
+NIGHT="2026-10-25 00:59:59 UTC"
+REPEAT_END=$(date -u -d "2026-10-25 02:00:00 UTC" +%s)
 
 # The runs a calendar makes after the base time, as UTC epoch seconds.
 runs() {
-  TZ=America/Toronto systemd-analyze calendar --base-time="$NIGHT" --iterations=3 "$1" 2>/dev/null \
+  TZ=Europe/Berlin systemd-analyze calendar --base-time="$NIGHT" --iterations=3 "$1" 2>/dev/null \
     | sed -n 's/.*(in UTC): //p' \
     | while read -r when; do date -u -d "$when" +%s; done
 }

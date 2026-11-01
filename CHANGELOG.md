@@ -13,7 +13,7 @@ _(no unreleased changes yet)_
 
 ### Fixed
 
-- **The timers keep running the night the clocks go back.** `terraria-guard.timer` (`*:*:30`) was a local-time calendar, and on 2026-11-01 the server this template comes from ran none of its local-time timers between 06:00 and 07:00 UTC: systemd took the repeated hour as already gone. They are now in UTC, with an `OnUnitActiveSec` net a little longer than the period and `AccuracySec=1s`. `tests/timers.sh` reproduces that night with `systemd-analyze` and fails on a local-time calendar. Reinstall the units after updating: `sudo cp systemd/*.timer /etc/systemd/system/ && sudo systemctl daemon-reload`.
+- **The timers keep running the night the clocks go back.** `terraria-guard.timer` (`*:*:30`) was a local-time calendar, and the night the clocks went back, the server this template comes from ran none of its local-time timers for an hour: systemd took the repeated hour as already gone. They are now in UTC, with an `OnUnitActiveSec` net a little longer than the period and `AccuracySec=1s`. `tests/timers.sh` reproduces a fall-back night with `systemd-analyze` and fails on a local-time calendar. Reinstall the units after updating: `sudo cp systemd/*.timer /etc/systemd/system/ && sudo systemctl daemon-reload`.
 
 ## [1.2.0] - 2026-10-27
 
