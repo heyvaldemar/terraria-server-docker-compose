@@ -116,6 +116,12 @@ jobs:
         # file under a running copy, wrapped and unwrapped.
         run: ./tests/read-whole.sh
 
+      - name: The timers keep running the night the clocks go back
+        # On 2026-11-01 the server this template comes from ran none of its
+        # local-time timers for the repeated hour. The test asks
+        # systemd-analyze for that night and fails on a local calendar.
+        run: ./tests/timers.sh
+
       - name: The compose file parses with the shipped defaults
         run: |
           cp .env.example .env

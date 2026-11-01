@@ -76,6 +76,8 @@ scripts/guard.sh --dry-run    # what it would do right now
 
 **Every script here is read whole before it runs.** bash reads a script as it executes it, and after each command reads on from the same byte offset in whatever the file holds by then. On the server this template comes from, the timer started the guard while its file was being edited in place: a syntax error, a failed unit, and the host's dead man's switch reporting the whole host down. Each script's body is one brace group, which bash parses in full before the first line runs, ending in `exit`. `tests/read-whole.sh` checks the shape of every script and rewrites the guard's file under a running copy, both ways: wrapped, the run finishes as it started; unwrapped, it runs the new text. A `git pull` or `./update.sh` writes new files rather than rewriting these, which a running copy never sees; an editor that saves in place does not.
 
+**The timers run on UTC, with a net under each.** On 2026-11-01, when the clocks went back an hour, the server this template comes from ran none of its local-time timers between 06:00 and 07:00 UTC: systemd reads a local calendar such as `*:0/5` in wall-clock time and took the repeated hour as already gone. A calendar in UTC has no repeated hour. Each timer also has `OnUnitActiveSec` a little longer than its period, which a run on time resets before it fires, so a run that is missed for any other reason is made up within one more period. `tests/timers.sh` asks `systemd-analyze` for each calendar's runs from 05:59:59 UTC that night on Toronto time, and checks the same calendar without `UTC` skipping the hour, so the test is seen to tell them apart.
+
 ## Administration
 
 ```bash
