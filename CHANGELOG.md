@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _(no unreleased changes yet)_
 
+## [1.2.2] - 2026-11-01
+
+### Changed
+
+- **`tests/timers.sh` checks the fall-back on Berlin time (2026-10-25).** Any zone with a fall-back shows the same skip; the timers themselves are unchanged.
+
 ## [1.2.1] - 2026-11-01
 
 ### Fixed
@@ -55,7 +61,8 @@ _(no unreleased changes yet)_
 - **`scripts/backup.sh` and `scripts/restore.sh`.** The world and the account and ban database, saved first, kept only once the archive is shown to hold both, mode 600. A restore refuses an archive without the database or under another world's name than the compose file starts, sets aside what was there, and compares every file at its live path by sha256.
 - **`tests/e2e-game.sh`, the real server in CI** from empty volumes, every claim above checked against it, the "without this" ones both ways.
 
-[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.0.0...v1.1.0
