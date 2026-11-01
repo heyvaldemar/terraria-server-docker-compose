@@ -125,6 +125,24 @@ CI also lints the shell and the workflows, scans the pinned image with Trivy, an
 
 The scripts' helper containers are the local image too, so nothing else is pulled to touch the volumes. TShock is GPL-3.0 and is not copied into this repository; the template is MIT.
 
+### Verify what you deploy
+
+Every release carries three files made on GitHub's runner with a short-lived identity and no stored key: `terraria-server-docker-compose-<tag>.tar.gz`, a `git archive` of exactly the tree the tag points at; `terraria-server-docker-compose-<tag>.tar.gz.sigstore.json`, a keyless [Sigstore](https://www.sigstore.dev/) signature over it; and `terraria-server-docker-compose-<tag>.intoto.jsonl`, [SLSA](https://slsa.dev/) build provenance from the SLSA generator. To check them with nothing from this repository trusted:
+
+```bash
+cosign verify-blob terraria-server-docker-compose-<tag>.tar.gz \
+  --bundle terraria-server-docker-compose-<tag>.tar.gz.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/heyvaldemar/terraria-server-docker-compose/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+slsa-verifier verify-artifact terraria-server-docker-compose-<tag>.tar.gz \
+  --provenance-path terraria-server-docker-compose-<tag>.intoto.jsonl \
+  --source-uri github.com/heyvaldemar/terraria-server-docker-compose \
+  --source-tag <tag>
+```
+
+Each release was signed by the run that published it, so its provenance names the tag. The workflow that makes them is [`release-assets.yml`](.github/workflows/release-assets.yml).
+
 ---
 
 ## About the maintainer
