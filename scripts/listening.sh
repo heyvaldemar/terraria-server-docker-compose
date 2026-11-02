@@ -27,11 +27,23 @@ PROJECT=${COMPOSE_PROJECT_NAME:-terraria}
 # A container that is not running is "cannot ask", not "not listening":
 # docker compose exec fails with 1 either way.
 [ -n "$(docker compose -f "$COMPOSE_FILE" -p "$PROJECT" ps -q --status running terraria-server 2>/dev/null)" ] || exit 3
-docker compose -f "$COMPOSE_FILE" -p "$PROJECT" exec -T terraria-server bash -c '
+
+# THE ANSWER IS A WORD, NOT AN EXIT CODE. The check above does not close the
+# gap: a container that stops between it and the exec makes docker compose
+# exec end with 1 ('service "terraria-server" is not running'), the same 1 a
+# grep that found nothing gives, or with 128 and "cannot exec in a stopped
+# state" printed on stdout (Compose 5.5.1, measured against restarts). So the
+# container prints what it found, and only "listening" or "closed" from an
+# exec that ended with 0 is an answer (tests/docker-failure.sh).
+out=$(docker compose -f "$COMPOSE_FILE" -p "$PROJECT" exec -T terraria-server bash -c '
   p=$(printf "%04X" "$1")
   [ -r /proc/net/tcp ] || exit 3
-  grep -qE "^ *[0-9]+: [0-9A-F]+:$p [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6 2>/dev/null' _ "$PORT" 2>/dev/null
-rc=$?
-case "$rc" in 0|1) ;; *) rc=3 ;; esac
+  grep -qE "^ *[0-9]+: [0-9A-F]+:$p [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6 2>/dev/null
+  case $? in 0) echo listening ;; 1) echo closed ;; *) exit 3 ;; esac' _ "$PORT" 2>/dev/null) || exit 3
+case "$out" in
+  listening) rc=0 ;;
+  closed) rc=1 ;;
+  *) rc=3 ;;
+esac
 exit "$rc"
 }

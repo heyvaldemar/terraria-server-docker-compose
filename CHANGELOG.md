@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_(no unreleased changes yet)_
+### Fixed
+
+- **A container stopping under the port check no longer reads as a closed port.** `scripts/listening.sh` took "closed" from the exit code of `docker compose exec`, and with Compose 5.5.1 a container that stops between its running check and the exec makes the exec itself end with 1 ('service "terraria-server" is not running'), the same 1 a grep that found nothing gives. `status.sh` then showed "Not accepting players" and the guard started its closed-port clock on a Docker failure. The container now prints `listening` or `closed`, and only that word from an exec that ended with 0 is an answer; anything else is "cannot ask". On the server this template comes from, a chat bot read a Docker error on stdout as part of a game's log. `tests/docker-failure.sh` plays the measured shapes (exit 1, 128 with "cannot exec in a stopped state" on stdout, 137, 126) through a fake `docker`.
 
 ## [1.2.2] - 2026-11-01
 

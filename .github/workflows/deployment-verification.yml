@@ -123,6 +123,12 @@ jobs:
         # calendar.
         run: ./tests/timers.sh
 
+      - name: Docker's own failure is never read as a closed port
+        # docker compose exec ends with 1 when the container stops under it,
+        # the same 1 a grep that found nothing gives. A fake docker plays the
+        # shapes measured on Compose 5.5.1 against scripts/listening.sh.
+        run: ./tests/docker-failure.sh
+
       - name: The compose file parses with the shipped defaults
         run: |
           cp .env.example .env
