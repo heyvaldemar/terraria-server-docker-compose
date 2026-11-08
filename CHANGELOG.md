@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_(no unreleased changes yet)_
+### Changed
+
+- **The README says why the health check never speaks the game protocol.** Measured on 2026-11-08 against TShock 6.2.1: a ConnectRequest is answered in 50 ms, and every one writes "is connecting" and "was booted" to the log and makes the server save and back up the world. The check stays the game port's LISTEN state in `/proc/net/tcp` and REST `/status`, and the README now also says it asks from inside the container, so it does not prove the port is published on the host or open in a firewall.
 
 ## [1.2.3] - 2026-11-02
 
