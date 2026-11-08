@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_(no unreleased changes yet)_
+
+## [1.2.4] - 2026-11-08
+
 ### Changed
 
 - **The README says why the health check never speaks the game protocol.** Measured on 2026-11-08 against TShock 6.2.1: a ConnectRequest is answered in 50 ms, and every one writes "is connecting" and "was booted" to the log and makes the server save and back up the world. The check stays the game port's LISTEN state in `/proc/net/tcp` and REST `/status`, and the README now also says it asks from inside the container, so it does not prove the port is published on the host or open in a firewall.
-
 ## [1.2.3] - 2026-11-02
 
 ### Fixed
@@ -69,7 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scripts/backup.sh` and `scripts/restore.sh`.** The world and the account and ban database, saved first, kept only once the archive is shown to hold both, mode 600. A restore refuses an archive without the database or under another world's name than the compose file starts, sets aside what was there, and compares every file at its live path by sha256.
 - **`tests/e2e-game.sh`, the real server in CI** from empty volumes, every claim above checked against it, the "without this" ones both ways.
 
-[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.0...v1.2.1
