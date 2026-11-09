@@ -79,7 +79,7 @@ FILE="$(basename "$ARCHIVE")"
 stamp="$(date +%Y%m%d-%H%M%S)"
 vols=(-v "$PREFIX-tshock:/tr/tshock" -v "$PREFIX-worlds:/tr/worlds" -v "$PREFIX-plugins:/tr/plugins")
 # shellcheck disable=SC2016  # expanded by the shell in the container
-docker run --rm --network none --user 0:0 --entrypoint bash "${vols[@]}" -v "$DIR:/in:ro" -e STAMP="$stamp" -e FILE="$FILE" "$IMAGE" -euc '
+STAMP="$stamp" FILE="$FILE" docker run --rm --network none --user 0:0 --entrypoint bash "${vols[@]}" -v "$DIR:/in:ro" -e STAMP -e FILE "$IMAGE" -euc '
   shopt -s dotglob nullglob
   for v in tshock worlds plugins; do
     aside="/tr/$v/.before-restore-$STAMP"
@@ -98,7 +98,7 @@ docker run --rm --network none --user 0:0 --entrypoint bash "${vols[@]}" -v "$DI
 # BY PATH AND BY BYTE: the archive unpacked once more, apart, and every file
 # in it compared by sha256 with the file at its live path.
 # shellcheck disable=SC2016  # expanded by the shell in the container
-check="$(docker run --rm --network none --user 0:0 --entrypoint bash "${vols[@]}" -v "$DIR:/in:ro" -e FILE="$FILE" "$IMAGE" -c '
+check="$(FILE="$FILE" docker run --rm --network none --user 0:0 --entrypoint bash "${vols[@]}" -v "$DIR:/in:ro" -e FILE "$IMAGE" -c '
   mkdir /tmp/c && tar -xzf "/in/$FILE" -C /tmp/c && cd /tmp/c || exit 1
   find . -type f -print0 | xargs -0 sha256sum >/tmp/sums
   cd /tr && echo "$(sha256sum -c /tmp/sums 2>/dev/null | grep -vc ": OK$") $(grep -c . /tmp/sums)"')"

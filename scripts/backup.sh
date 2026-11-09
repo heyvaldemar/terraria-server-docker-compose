@@ -99,7 +99,7 @@ if ! helper tar -v "$OUT:/out" -- -czf "/out/$NAME.partial" -C /tr \
 fi
 # Owned by whoever ran this, readable by nobody else: it holds the REST token.
 # shellcheck disable=SC2016  # expanded by the shell in the container, not here
-helper sh -v "$OUT:/out" -e OWNER="$(id -u):$(id -g)" -- -c 'chown "$OWNER" "/out/$0" && chmod 600 "/out/$0"' "$NAME.partial"
+OWNER="$(id -u):$(id -g)" helper sh -v "$OUT:/out" -e OWNER -- -c 'chown "$OWNER" "/out/$0" && chmod 600 "/out/$0"' "$NAME.partial"
 held="$(tar -tzf "$OUT/$NAME.partial" 2>/dev/null | grep -cE "^(\./)?(worlds/$WORLD|tshock/tshock\.sqlite)$")"
 if [ "${held:-0}" -lt 2 ]; then
   mv "$OUT/$NAME.partial" "$OUT/$NAME.failed"
