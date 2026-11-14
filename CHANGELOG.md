@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_(no unreleased changes yet)_
+
+## [1.3.0] - 2026-11-14
+
+### Security
+
+- **The guard's webhook address is no longer on a command line.** `scripts/guard.sh` gave curl the address as an argument, where every process on the host could read it in `ps` for as long as curl ran, and an incoming webhook's address is its key. curl reads it from stdin now (`--config -`), the message from a file of its own. `tests/e2e-game.sh` posts to a listener on the runner and checks the address was not among curl's arguments.
+- **CI looks for the join password everywhere it could leak to.** `tests/secret-probe.sh`, with the password `.env` sets (a quote and a backslash in it): it fails on it in `docker compose logs`, any command line in the container or the host's `ps`, after the first start, across the backup, after the guard's restart and after a crash, and the test reads TShock's own logs as uid 1000 for it too; it names the place, never the value. It found nothing ([run 43623760207](https://github.com/heyvaldemar/terraria-server-docker-compose/actions/runs/43623760207)).
+
+### Added
+
+- **A crash is said by the guard.** When TShock exits, `start.sh` exits with its status, Docker starts the container again, and the health check is green with the fresh one. The guard now writes down Docker's restart count every minute and says a restart once, through the webhook too, with the exit code and the reason from Docker's die and oom events; a 137 whose oom event Docker has not stored yet is read again for up to ten seconds; three in a day exit 1. CI kills TShock with SIGKILL and needs the guard to say it once.
+- **A stop is measured.** `tests/clean-stop.sh` in `tests/e2e-game.sh`: a second of the 60-second grace period, exit 0, TShock's "Saving before exit".
+
 ### Fixed
 
 - **An index pushed again over the same build is no longer reported as drift.** The daily pin check compared each pin with the digest the tag's index has now and failed on any difference, so a publisher re-pushing the index over the very same images (a platform added, an attestation rewritten) turned it red for an image nobody rebuilt, and no pin would ever move to turn it green. It now also compares the linux/amd64 build under both digests, the one CI runs and proves: the same build passes with a notice naming both digests, a new build fails as drift exactly as before, and a build that cannot be read still fails.
@@ -78,7 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scripts/backup.sh` and `scripts/restore.sh`.** The world and the account and ban database, saved first, kept only once the archive is shown to hold both, mode 600. A restore refuses an archive without the database or under another world's name than the compose file starts, sets aside what was there, and compares every file at its live path by sha256.
 - **`tests/e2e-game.sh`, the real server in CI** from empty volumes, every claim above checked against it, the "without this" ones both ways.
 
-[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/heyvaldemar/terraria-server-docker-compose/compare/v1.2.1...v1.2.2
