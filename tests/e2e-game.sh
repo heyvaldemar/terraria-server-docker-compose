@@ -70,6 +70,7 @@ wait_health() {  # status seconds
 volumes() { for v in tshock worlds plugins; do docker volume "$1" "$TERRARIA_VOLUME_PREFIX-$v" >/dev/null 2>&1; done; }
 cleanup() {
   compose down --remove-orphans >/dev/null 2>&1
+  docker compose -p "tr-e2e-$RUN-canary" -f "$TERRARIA_BACKUP_DIR/canary.yml" down -t 0 >/dev/null 2>&1
   COMPOSE_PROJECT_NAME="tr-e2e-$RUN-restored" TERRARIA_VOLUME_PREFIX="tr-e2e-$RUN-restored" docker compose -f "$F" down >/dev/null 2>&1
   docker rm -f "tr-e2e-$RUN-stock" >/dev/null 2>&1
   for p in "tr-e2e-$RUN" "tr-e2e-$RUN-restored" "tr-e2e-$RUN-stock"; do
@@ -78,6 +79,28 @@ cleanup() {
   rm -rf "$TERRARIA_BACKUP_DIR"
 }
 trap cleanup EXIT
+
+# tests/secret-probe.sh: the join password, with a quote and a backslash in
+# it, may not reach docker compose logs, TShock's logs, a command line in the
+# container or the host's ps. It reaches compose from this script's
+# environment, so the probe keeps that value (read from a file of its own)
+# instead of planting one in .env.
+export PROBE_PROJECT="$COMPOSE_PROJECT_NAME" PROBE_COMPOSE="$F" PROBE_EXPECT=TERRARIA_SERVER_PASSWORD PROBE_KEEP=TERRARIA_SERVER_PASSWORD
+export PROBE_VALUES="$TERRARIA_BACKUP_DIR/probe.values" PROBE_ENV="$TERRARIA_BACKUP_DIR/probe.env"
+( umask 077; printf 'TERRARIA_SERVER_PASSWORD=%s\n' "$TERRARIA_SERVER_PASSWORD" >"$PROBE_ENV" )
+tests/secret-probe.sh plant >/dev/null || { echo "the probe could not take the password"; exit 1; }
+# TShock's own logs are read here, as uid 1000: the probe reads game logs as
+# root, and root in this container has no capabilities, so it cannot open a
+# directory that belongs to uid 1000. The value is compared through a file,
+# never printed.
+probe() {  # label
+  local out n lines
+  if out="$(tests/secret-probe.sh check "$1" 2>&1)"; then pass "${out##*$'\n'}"; else fail "secret probe ($1): $(tr '\n' ' ' <<<"$out")"; fi
+  n="$(docker exec -u 1000 "$(cid)" sh -c 'cat /tshock/logs/*.log' 2>/dev/null | grep -c -F -f <(cut -f2- "$PROBE_VALUES") || true)"
+  lines="$(docker exec -u 1000 "$(cid)" sh -c 'cat /tshock/logs/*.log' 2>/dev/null | grep -c . || true)"
+  [ "${lines:-0}" -gt 0 ] && [ "$n" = 0 ] && pass "($1) and not in TShock's own logs ($lines lines, read as uid 1000)" \
+    || fail "($1) TShock's own logs: the password on ${n:-?} of ${lines:-0} lines"
+}
 
 echo "=== the first start, from empty volumes ==="
 echo
@@ -96,6 +119,7 @@ for _ in $(seq 1 300); do
 done
 [ "$(health)" = healthy ] || { echo "the server never became healthy"; docker logs --tail 60 "$(cid)"; exit 1; }
 $seen_green_early && fail "healthy while the world was still being generated" || pass "not healthy until the world was generated and the game listened"
+probe "first start"
 
 pid="$(docker exec "$(cid)" bash -c 'for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = TShock.Server ] && echo "${p#/proc/}"; done' | head -1)"
 uid="$(docker exec "$(cid)" sh -c "sed -n 's/^Uid:\t\([0-9]*\).*/\1/p' /proc/$pid/status")"
@@ -189,11 +213,37 @@ out="$(scripts/guard.sh 2>&1)"; rc=$?
 [ "$rc" = 1 ] && grep -q "6 restarts in 24 hours; not restarting" <<<"$out" && pass "six restarts in 24 hours: stops, exit 1" || fail "restart cap: exit $rc, $out"
 [ "$(starts)" = "$before" ] && pass "and none of those five decisions restarted the server" || fail "the server was restarted by a decision that must not restart it"
 echo $(( $(date +%s) - 90000 )) >"$TERRARIA_GUARD_STATE.restarts"
-out="$(scripts/guard.sh 2>&1)"; rc=$?
+# This restart is said to a webhook: a listener on this machine takes the post
+# and writes down the path it was sent to, and a curl in front of the real one
+# writes down its arguments. The webhook's address is its key: it must reach
+# curl on stdin, never as an argument.
+KEY="k$(openssl rand -hex 12)"
+mkdir -p "$TERRARIA_BACKUP_DIR/bin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" >>"%s/curl.argv"\nexec "%s" "$@"\n' "$TERRARIA_BACKUP_DIR" "$(command -v curl)" >"$TERRARIA_BACKUP_DIR/bin/curl"
+chmod +x "$TERRARIA_BACKUP_DIR/bin/curl"
+python3 -c '
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        open(sys.argv[1], "a").write(self.path + "\n")
+        self.send_response(200); self.end_headers()
+    def log_message(self, *a): pass
+s = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(sys.argv[2], "w").write(str(s.server_port))
+s.serve_forever()' "$TERRARIA_BACKUP_DIR/hook.paths" "$TERRARIA_BACKUP_DIR/hook.port" &
+hookpid=$!
+for _ in $(seq 1 40); do [ -s "$TERRARIA_BACKUP_DIR/hook.port" ] && break; sleep 0.25; done
+out="$(PATH="$TERRARIA_BACKUP_DIR/bin:$PATH" TERRARIA_GUARD_WEBHOOK="http://127.0.0.1:$(cat "$TERRARIA_BACKUP_DIR/hook.port")/hooks/$KEY" scripts/guard.sh 2>&1)"; rc=$?
+kill "$hookpid" 2>/dev/null
 [ "$rc" = 0 ] && grep -q "restarted, and it listens again after" <<<"$out" && scripts/listening.sh \
   && pass "closed 2 min, nobody on: ${out#* * }" || fail "the restart: exit $rc, $out"
+grep -qx "/hooks/$KEY" "$TERRARIA_BACKUP_DIR/hook.paths" 2>/dev/null && [ -s "$TERRARIA_BACKUP_DIR/curl.argv" ] && ! grep -q "$KEY" "$TERRARIA_BACKUP_DIR/curl.argv" \
+  && pass "said to the webhook, whose address was not among curl's arguments" \
+  || fail "the webhook: posts to $(tr '\n' ' ' <"$TERRARIA_BACKUP_DIR/hook.paths" 2>/dev/null), the address among curl's arguments $(grep -c "$KEY" "$TERRARIA_BACKUP_DIR/curl.argv" 2>/dev/null) time(s)"
 [ "$(grep -c . "$TERRARIA_GUARD_STATE.restarts")" = 1 ] && pass "the restart is counted, and a stamp older than a day dropped" || fail "restart stamps: $(cat "$TERRARIA_GUARD_STATE.restarts")"
 wait_health healthy 120 && pass "healthy again" || fail "after the guard's restart: $(health)"
+probe "after the guard's restart"
 st="$(scripts/status.sh)" && grep -q '"status": "Online"' <<<"$st" && pass "status: Online again" || fail "status after the restart: $st"
 [ "$(slots)" = "MaxSlots 10 ReservedSlots 245 " ] && [ "$(max)" = 10 ] && pass "start.sh wrote 10 and 245 back on the restart, and the cap is 10 again" \
   || fail "after the restart: $(slots), cap $(max)"
@@ -272,7 +322,13 @@ out="$(scripts/admin.sh save 2>&1)" && [ "$(docker exec "$(cid)" stat -c %y "/wo
 echo
 echo "=== backup ==="
 echo
-out="$(scripts/backup.sh)"; rc=$?
+# Watched by the probe: every command line in the container and on the host
+# is sampled while the backup asks TShock to save and archives.
+rc=0
+# shellcheck disable=SC2016  # $1 is the inner bash's own argument
+pout="$(tests/secret-probe.sh during "the backup" bash -c 'scripts/backup.sh >"$1" 2>&1' _ "$TERRARIA_BACKUP_DIR/backup.out" 2>&1)" || rc=$?
+out="$(cat "$TERRARIA_BACKUP_DIR/backup.out")"
+[ "$rc" = 0 ] && pass "${pout##*$'\n'}" || fail "the backup under the probe: $(tr '\n' ' ' <<<"$pout")"
 archive="$(find "$TERRARIA_BACKUP_DIR" -name 'terraria-*.tar.gz' | head -1)"
 if [ "$rc" = 0 ] && [ -n "$archive" ]; then pass "backup: ${out#* * }"; else fail "backup: exit $rc, $out"; echo; echo "passed: $PASSED   failed: $FAILED"; exit 1; fi
 amode="$(stat -c %a "$archive" 2>/dev/null || stat -f %Lp "$archive")"
@@ -282,11 +338,46 @@ grep -qx "worlds/$TERRARIA_WORLD_FILE.wld" <<<"$list" && grep -qx tshock/tshock.
   && pass "it holds the world and tshock.sqlite, and no logs" || fail "the archive holds: $(tr '\n' ' ' <<<"$list")"
 
 echo
+echo "=== a crash Docker restarts, said once by the guard ==="
+echo
+# A death TShock cannot catch, as its own user. start.sh exits with
+# its status, Docker starts the container again, and the health check goes
+# green with the fresh one; the guard must say it once.
+out="$(scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ! grep -q "restarted .* since" <<<"$out" && pass "before: the count written down, nothing said about restarts" || fail "before the crash: exit $rc, $out"
+pid="$(docker exec "$(cid)" bash -c 'for p in /proc/[0-9]*; do [ "$(cat "$p/comm" 2>/dev/null)" = TShock.Server ] && echo "${p#/proc/}"; done' | head -1)"
+# SIGKILL, a death nothing can catch, stands in for a crash. Sent by the
+# container's own shell: the image has no kill program, and a `docker exec
+# ... kill` fails without a word (the reason this case first passed nothing).
+docker exec -u 1000 "$(cid)" sh -c "kill -KILL $pid" || fail "could not send SIGKILL to TShock (pid ${pid:-?})"
+for _ in $(seq 1 60); do [ "$(docker inspect -f '{{.RestartCount}}' "$(cid)")" -ge 1 ] && break; sleep 1; done
+wait_health healthy 180 || fail "the crashed server did not come back healthy: $(health)"
+out="$(scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 0 ] && grep -q "the server restarted 1 time since .*, last exit code 137 (SIGKILL).*TShock exited 137" <<<"$out" \
+  && pass "after the crash: $(grep -o 'the server restarted.*(1 in 24 h)' <<<"$out")" || fail "after the crash: exit $rc, $out"
+out="$(scripts/guard.sh 2>&1)"; rc=$?
+[ "$rc" = 0 ] && ! grep -q "the server restarted" <<<"$out" && pass "the run after: nothing said about it" || fail "the run after the crash: exit $rc, $out"
+probe "after the crash"
+# The selftest needs a container whose process 1 (or a process sharing its
+# output) another process can write to. TShock's cannot be: it runs as uid
+# 1000 with no capabilities, and neither process 1 nor TShock lets anyone
+# open its standard output, its own uid included (measured). So the canary
+# goes to a scratch container on this runner, which proves what the
+# selftest is for: that the probe's three collectors see what they look for.
+printf 'services:\n  canary:\n    image: alpine:3.22\n    command: ["sleep", "300"]\n' >"$TERRARIA_BACKUP_DIR/canary.yml"
+docker compose -p "tr-e2e-$RUN-canary" -f "$TERRARIA_BACKUP_DIR/canary.yml" up -d >/dev/null 2>&1
+if out="$(PROBE_PROJECT="tr-e2e-$RUN-canary" PROBE_COMPOSE="$TERRARIA_BACKUP_DIR/canary.yml" tests/secret-probe.sh selftest 2>&1)"; then pass "${out//$'\n'/; }"; else fail "secret probe selftest: $out"; fi
+docker compose -p "tr-e2e-$RUN-canary" -f "$TERRARIA_BACKUP_DIR/canary.yml" down -t 0 >/dev/null 2>&1
+
+echo
 echo "=== the way out ==="
 echo
 before="$(docker exec "$(cid)" stat -c %Y "/worlds/$TERRARIA_WORLD_FILE.wld")"
 sleep 2
-compose stop >/dev/null 2>&1
+# tests/clean-stop.sh: seconds, the exit code, Docker's SIGKILL or not, and
+# TShock's own "Saving before exit".
+out="$(CLEAN_STOP_PROJECT="$COMPOSE_PROJECT_NAME" CLEAN_STOP_COMPOSE="$F" tests/clean-stop.sh terraria-server "Saving before exit" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && pass "${out%%$'\n'*}" || fail "the stop: $out"
 code="$(docker inspect -f '{{.State.ExitCode}}' "$(cid)")"
 after="$(docker run --rm -v "$TERRARIA_VOLUME_PREFIX-worlds:/w" --entrypoint stat "$IMAGE" -c %Y "/w/$TERRARIA_WORLD_FILE.wld")"
 grep -q 'Saving before exit' <<<"$(docker logs "$(cid)" 2>&1)" && [ "$code" = 0 ] && [ "$after" -gt "$before" ] \

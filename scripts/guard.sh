@@ -48,6 +48,17 @@
 #   it can take at most two of them.
 # - Otherwise save the world, restart, and prove the port is back.
 #
+# A CRASH DOCKER RESTARTS IS SAID ONCE. When TShock exits, start.sh exits with
+# its status and Docker starts the container again; the health check goes
+# green with the fresh one and nothing else says the server went down. Each
+# run writes down the container's name, id and Docker's restart count
+# (RestartCount). A count that grew is said once, through the webhook too,
+# with the exit code and the reason from Docker's die and oom events (a
+# restarted container's own state says exit 0 and not killed for memory
+# again); 3 or more in 24 hours exit 1. The first run only writes the count
+# down; a new container id, or a count that went down (`docker restart`, the
+# guard's own restarts included, sets it to 0), starts afresh.
+#
 # TERRARIA_GUARD_WEBHOOK, when set, receives every action but housekeeping as
 # {"text": ...}, which Mattermost and Slack incoming webhooks accept, and a
 # housekeeping restart that does not bring the port back. A webhook that does
@@ -98,10 +109,19 @@ say() { echo "$(date '+%F %T') $*"; }
 tell() {  # message: to the log, and to the webhook when there is one
   say "$1"
   [ -n "$WEBHOOK" ] || return 0
-  local text=${1//\\/\\\\}
+  local text=${1//\\/\\\\} body url rc=0
   text=${text//\"/\\\"}
-  if ! printf '{"text": "terraria: %s"}' "$text" \
-       | curl -fsS -m 10 -o /dev/null -H 'Content-Type: application/json' --data-binary @- "$WEBHOOK"; then
+  # The webhook's address is its key, so curl reads it from stdin (--config
+  # -) and it is on no command line, where every process on the host could
+  # read it in ps; the message goes in a file of its own.
+  url=${WEBHOOK//\\/\\\\}
+  url=${url//\"/\\\"}
+  body=$(mktemp) || return 1
+  printf '{"text": "terraria: %s"}' "$text" >"$body"
+  printf 'url = "%s"\n' "$url" \
+    | curl -fsS -m 10 -o /dev/null -H 'Content-Type: application/json' --data-binary @"$body" --config - || rc=$?
+  rm -f "$body"
+  if [ "$rc" != 0 ]; then
     say "the webhook did not answer; the message above was not delivered" >&2
     return 1
   fi
@@ -155,6 +175,68 @@ restart() {
   return 1
 }
 now=$(date +%s)
+
+# ------------------------------------------------------------- Docker's restarts
+rcid="$(compose ps -q --status running terraria-server 2>/dev/null | head -1)"
+if [ -n "$rcid" ]; then
+  for f in "$STATE.docker" "$STATE.crashes"; do
+    [ -L "$f" ] && { say "$f is a symlink; refusing to use it"; exit 1; }
+  done
+  if ! info=$(docker inspect "$rcid" --format '{{.Name}} {{.Id}} {{.RestartCount}} {{.State.FinishedAt}} {{.State.StartedAt}}' 2>/dev/null) || [ -z "$info" ]; then
+    say "cannot read the restart count of terraria-server; nothing written"
+    exit 1
+  fi
+  read -r rname rid rcount rfin rstart <<<"$info"
+  case ${rcount:-} in ''|*[!0-9]*) say "cannot read the restart count of terraria-server ($rcount); nothing written"; exit 1 ;; esac
+  bname=""; bid=""; bcount=""; bsince=""
+  read -r bname bid bcount bsince 2>/dev/null <"$STATE.docker" || true
+  case ${bcount:-} in ''|*[!0-9]*) bcount="" ;; esac
+  case ${bsince:-} in ''|*[!0-9]*) bsince=$now ;; esac
+  if [ "$bname" = "$rname" ] && [ "$bid" = "$rid" ] && [ -n "$bcount" ] && [ "$rcount" -gt "$bcount" ]; then
+    more=$(( rcount - bcount ))
+    # From a minute before the last run to two seconds from now: an "until"
+    # of this very second missed a die of this very second (measured).
+    ev=$(docker events --since $(( bsince - 60 )) --until $(( $(date +%s) + 2 )) --filter "container=$rid" --filter event=die --filter event=oom \
+      --format '{{.Action}} {{index .Actor.Attributes "exitCode"}}' 2>/dev/null)
+    rexit=$(awk '$1 == "die" { c = $2 } END { print c }' <<<"$ev")
+    # A KILL FOR MEMORY CAN BE STORED LATE. On a GitHub runner (Docker 29.4.2)
+    # the oom event of 1 kill in 20 was not there when the die was, and was
+    # 10 seconds later. A 137 with no oom event yet is read again, for up to
+    # ten seconds, before it is called a plain SIGKILL.
+    if [ "$rexit" = 137 ] && ! grep -q '^oom' <<<"$ev"; then
+      for _ in 1 2 3 4 5; do
+        sleep 2
+        ev=$(docker events --since $(( bsince - 60 )) --until $(( $(date +%s) + 2 )) --filter "container=$rid" --filter event=die --filter event=oom \
+          --format '{{.Action}} {{index .Actor.Attributes "exitCode"}}' 2>/dev/null)
+        grep -q '^oom' <<<"$ev" && break
+      done
+    fi
+    case "$rexit" in
+      134) rexit="134 (SIGABRT)" ;; 137) rexit="137 (SIGKILL)" ;; 139) rexit="139 (SIGSEGV)" ;; 143) rexit="143 (SIGTERM)" ;;
+    esac
+    why=""
+    if grep -q '^oom' <<<"$ev"; then
+      why="killed for memory (oom event, exit ${rexit:-?})"
+    else
+      # start.sh's own last word before Docker started it again, or the
+      # crash line; anything 24 characters or longer masked.
+      why=$(docker logs --until "$rstart" --tail 400 "$rid" 2>&1 | grep -a -i -E 'fatal|segmentation|core dumped|panic|abort|unhandled exception|start.sh: (TShock exited|the memory limit)' | tail -1 \
+        | sed -E 's/[A-Za-z0-9+\/=_-]{24,}/<masked>/g' | tr -d '\r' | cut -c1-200)
+      [ -n "$why" ] && why="its log before that: $why"
+    fi
+    before=0
+    [ -f "$STATE.crashes" ] && before=$(awk -v t=$(( now - 86400 )) '$1 > t { n += $2 } END { print n + 0 }' "$STATE.crashes")
+    crashes=$(( before + more ))
+    if ! $DRY; then
+      echo "$now $more" >>"$STATE.crashes"
+      echo "$rname $rid $rcount $now" >"$STATE.docker"
+    fi
+    tell "the server restarted $more time$( [ "$more" = 1 ] || echo s) since $(date -d "@$bsince" '+%F %T' 2>/dev/null || echo "$bsince"), last exit code ${rexit:-?}, last finished ${rfin:-?}${why:+; $why} ($crashes in 24 h). Docker brought it back, so its health check is green again. docker compose -p $PROJECT logs --since 2h terraria-server" || true
+    [ "$crashes" -ge 3 ] && exit 1
+  elif [ "$bname" != "$rname" ] || [ "$bid" != "$rid" ] || [ -z "$bcount" ] || [ "$rcount" -lt "$bcount" ]; then
+    $DRY || echo "$rname $rid $rcount $now" >"$STATE.docker"
+  fi
+fi
 
 scripts/listening.sh
 listening=$?
